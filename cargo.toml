@@ -1,0 +1,21 @@
+[package]
+name = "fox-hunt-base-station"
+version = "0.1.0"
+description = "A fox hunting TUI to help you find where a radio signal is coming from"
+authors = ["day"]
+license = "MIT"
+edition = "2024"
+
+[dependencies]
+crossterm = "0.29.0"
+ratatui = "0.30.2"
+color-eyre = "0.6.5"
+geojson = "0.24"
+csv = "1.3"
+
+# Read the optimization guideline for more details: https://ratatui.rs/recipes/apps/release-your-app/#optimizations
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
