@@ -6,8 +6,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Tick rate. Kept low because nothing in the app animates on tick —
-/// it's only here so the event loop has a heartbeat.
 const TICK_FPS: f64 = 10.0;
 
 #[derive(Clone, Debug)]

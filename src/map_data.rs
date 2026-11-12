@@ -10,7 +10,7 @@ pub struct Building {
     pub bbox: BBox,
 }
 
-// ---------- Grid index (unchanged behaviour) ----------
+// ---------- Grid index ----------
 
 #[derive(Debug)]
 pub struct GridIndex {
@@ -91,8 +91,6 @@ impl GridIndex {
 
 // ---------- Land / water mask ----------
 
-/// Coarse 2D mask over the SA bbox. Cell values:
-///   0 = water, 1 = land, 2 = edge (ambiguous → needs precise test)
 #[derive(Debug)]
 pub struct LandMask {
     x_min: f64,
