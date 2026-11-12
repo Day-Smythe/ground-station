@@ -165,7 +165,7 @@ impl App {
                 terminal.draw(|frame| frame.render_widget(&self, frame.area()))?;
                 let elapsed = t.elapsed();
                 if elapsed.as_millis() > 100 {
-                    eprintln!("[perf] draw took {:?}", elapsed);
+                    // eprintln!("[perf] draw took {:?}", elapsed);
                 }
                 dirty = false;
             }

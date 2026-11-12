@@ -12,18 +12,33 @@ use ratatui::{
 use crate::app::App;
 use crate::map_data::{BBox, Polyline};
 
-const BUILDING_LOD_DPX: f64 = 3000.0;
-const ROAD_MIN_DOTS: f64 = 2.5;
-const BUILDING_MIN_DOTS: f64 = 0.6;
+// ---- Layer styling ----
 
-/// Per-frame building cap. Lowered from 5000 to 2000 — dense urban views
-/// can still fill in nicely because the loop drains properly now, but this
-/// keeps the worst-case draw predictable on slow terminals.
-const MAX_BUILDINGS_PER_FRAME: usize = 2_000;
+/// Coastline color (medium grey, sits between minor and major roads).
+const COAST_COLOR: Color = Color::Indexed(245);
+/// Minor roads (dark grey, thin).
+const MINOR_ROAD_COLOR: Color = Color::Indexed(240);
+/// Major roads (white, thick).
+const MAJOR_ROAD_COLOR: Color = Color::White;
+/// Water dot color.
+const WATER_COLOR: Color = Color::Rgb(30, 50, 100);
+
+// ---- LOD / budget ----
+
+/// Skip minor roads whose bbox is smaller than this many dots.
+const MINOR_ROAD_MIN_DOTS: f64 = 3.5;
+/// Skip major roads whose bbox is smaller than this many dots.
+const MAJOR_ROAD_MIN_DOTS: f64 = 2.0;
+
+/// Per-frame polyline caps (safety net — most frames won't hit these).
+const MAX_MINOR_ROADS_PER_FRAME: usize = 4_000;
+const MAX_MAJOR_ROADS_PER_FRAME: usize = 2_000;
+
+/// Width of major roads in braille dots. 1 = single line, 3 = 3 parallel lines.
+const MAJOR_ROAD_THICKNESS: usize = 1;
 
 /// Water dot spacing in braille dots (≈ 8 characters between dots).
-/// Doubled from 8 to 16 — cuts water-layer draw volume by ~4×.
-const WATER_DOT_SPACING: f64 = 16.0;
+const WATER_DOT_SPACING: f64 = 8.0;
 
 fn marker_radius(dpx: f64, dpy: f64, desired_dots: f64, max_deg: f64) -> f64 {
     let dp = dpx.min(dpy).max(1e-12);
@@ -198,12 +213,12 @@ impl App {
             .x_bounds([self.view_x_min, self.view_x_max])
             .y_bounds([self.view_y_min, self.view_y_max])
             .paint(|ctx| {
+                // 1) Water background dots.
                 if has_land {
                     let dots_x = (area.width as f64 * 2.0 / WATER_DOT_SPACING).max(1.0);
                     let dots_y = (area.height as f64 * 4.0 / WATER_DOT_SPACING).max(1.0);
                     let step_x = width_deg / dots_x;
                     let step_y = height_deg / dots_y;
-                    let water = Color::Rgb(30, 50, 100);
 
                     let mut y = self.view_y_min;
                     while y <= self.view_y_max {
@@ -219,7 +234,7 @@ impl App {
                                     y1: y,
                                     x2: x,
                                     y2: y,
-                                    color: water,
+                                    color: WATER_COLOR,
                                 });
                             }
                             x += step_x;
@@ -228,49 +243,78 @@ impl App {
                     }
                 }
 
+                // 2) Coastline (behind roads, so roads stay readable).
                 for line in &self.map.coastline {
-                    draw_polyline_culled(ctx, line, view, Color::Gray);
+                    draw_polyline_culled(ctx, line, view, COAST_COLOR, 1, dpx, dpy);
                 }
 
-                for (line, bbox) in self.map.roads.iter().zip(&self.map.road_bboxes) {
-                    let w_dots = (bbox.2 - bbox.0) * dpx;
-                    let h_dots = (bbox.3 - bbox.1) * dpy;
-                    if w_dots.max(h_dots) < ROAD_MIN_DOTS {
-                        continue;
-                    }
-                    if !bbox_intersects(*bbox, view) {
-                        continue;
-                    }
-                    draw_polyline_culled(ctx, line, view, Color::Indexed(240));
-                }
-
-                if dpx >= BUILDING_LOD_DPX {
+                // 3) Minor roads — dark grey, thin.
+                {
                     let mut drawn = 0usize;
-                    for idx in self.map.building_grid.query(view) {
-                        if drawn >= MAX_BUILDINGS_PER_FRAME {
+                    for (line, bbox) in self
+                        .map
+                        .minor_roads
+                        .iter()
+                        .zip(&self.map.minor_road_bboxes)
+                    {
+                        if drawn >= MAX_MINOR_ROADS_PER_FRAME {
                             break;
                         }
-                        let b = &self.map.buildings[idx as usize];
-                        let w_dots = (b.bbox.2 - b.bbox.0) * dpx;
-                        let h_dots = (b.bbox.3 - b.bbox.1) * dpy;
-                        if w_dots < BUILDING_MIN_DOTS && h_dots < BUILDING_MIN_DOTS {
-                            let (x, y) = (b.bbox.0, b.bbox.1);
-                            ctx.draw(&CanvasLine {
-                                x1: x, y1: y, x2: x, y2: y,
-                                color: Color::Indexed(238),
-                            });
-                        } else {
-                            let (x0, y0, x1, y1) = b.bbox;
-                            let c = Color::Indexed(238);
-                            ctx.draw(&CanvasLine { x1: x0, y1: y0, x2: x1, y2: y0, color: c });
-                            ctx.draw(&CanvasLine { x1: x1, y1: y0, x2: x1, y2: y1, color: c });
-                            ctx.draw(&CanvasLine { x1: x1, y1: y1, x2: x0, y2: y1, color: c });
-                            ctx.draw(&CanvasLine { x1: x0, y1: y1, x2: x0, y2: y0, color: c });
+                        let w_dots = (bbox.2 - bbox.0) * dpx;
+                        let h_dots = (bbox.3 - bbox.1) * dpy;
+                        if w_dots.max(h_dots) < MINOR_ROAD_MIN_DOTS {
+                            continue;
                         }
+                        if !bbox_intersects(*bbox, view) {
+                            continue;
+                        }
+                        draw_polyline_culled(
+                            ctx,
+                            line,
+                            view,
+                            MINOR_ROAD_COLOR,
+                            1,
+                            dpx,
+                            dpy,
+                        );
                         drawn += 1;
                     }
                 }
 
+                // 4) Major roads — white, thick (3 parallel lines).
+                {
+                    let mut drawn = 0usize;
+                    for (line, bbox) in self
+                        .map
+                        .major_roads
+                        .iter()
+                        .zip(&self.map.major_road_bboxes)
+                    {
+                        if drawn >= MAX_MAJOR_ROADS_PER_FRAME {
+                            break;
+                        }
+                        let w_dots = (bbox.2 - bbox.0) * dpx;
+                        let h_dots = (bbox.3 - bbox.1) * dpy;
+                        if w_dots.max(h_dots) < MAJOR_ROAD_MIN_DOTS {
+                            continue;
+                        }
+                        if !bbox_intersects(*bbox, view) {
+                            continue;
+                        }
+                        draw_polyline_culled(
+                            ctx,
+                            line,
+                            view,
+                            MAJOR_ROAD_COLOR,
+                            MAJOR_ROAD_THICKNESS,
+                            dpx,
+                            dpy,
+                        );
+                        drawn += 1;
+                    }
+                }
+
+                // 5) Stations, dotted lines, fixes.
                 for group in &self.groups {
                     for (lat, lon) in &group.intersections {
                         for e in &group.entries {
@@ -290,11 +334,21 @@ impl App {
     }
 }
 
+// ---------- helpers ----------
+
 fn bbox_intersects(a: BBox, b: BBox) -> bool {
     !(a.2 < b.0 || a.0 > b.2 || a.3 < b.1 || a.1 > b.3)
 }
 
-fn draw_polyline_culled(ctx: &mut Context<'_>, line: &Polyline, view: BBox, color: Color) {
+fn draw_polyline_culled(
+    ctx: &mut Context<'_>,
+    line: &Polyline,
+    view: BBox,
+    color: Color,
+    thickness: usize,
+    dpx: f64,
+    dpy: f64,
+) {
     if line.len() < 2 {
         return;
     }
@@ -309,7 +363,55 @@ fn draw_polyline_culled(ctx: &mut Context<'_>, line: &Polyline, view: BBox, colo
         if sx1 < vx0 || sx0 > vx1 || sy1 < vy0 || sy0 > vy1 {
             continue;
         }
+        if thickness <= 1 {
+            ctx.draw(&CanvasLine { x1, y1, x2, y2, color });
+        } else {
+            draw_thick_segment(ctx, x1, y1, x2, y2, color, thickness, dpx, dpy);
+        }
+    }
+}
+
+/// Draw a segment `thickness` braille-dots wide by drawing `thickness`
+/// parallel lines one dot apart in perpendicular dot-space. Fixed on-screen
+/// thickness regardless of zoom, because the offset is derived from `dpx`/`dpy`.
+fn draw_thick_segment(
+    ctx: &mut Context<'_>,
+    x1: f64,
+    y1: f64,
+    x2: f64,
+    y2: f64,
+    color: Color,
+    thickness: usize,
+    dpx: f64,
+    dpy: f64,
+) {
+    let dpx_safe = dpx.max(1e-12);
+    let dpy_safe = dpy.max(1e-12);
+
+    let dx_dot = (x2 - x1) * dpx_safe;
+    let dy_dot = (y2 - y1) * dpy_safe;
+    let len_dot = (dx_dot * dx_dot + dy_dot * dy_dot).sqrt();
+    if len_dot < 1e-9 {
         ctx.draw(&CanvasLine { x1, y1, x2, y2, color });
+        return;
+    }
+    // Perpendicular unit vector in dot space.
+    let px = -dy_dot / len_dot;
+    let py = dx_dot / len_dot;
+
+    let half = (thickness.saturating_sub(1)) as f64 / 2.0;
+    let mut k = -half;
+    while k <= half + 1e-9 {
+        let ox = (px * k) / dpx_safe;
+        let oy = (py * k) / dpy_safe;
+        ctx.draw(&CanvasLine {
+            x1: x1 + ox,
+            y1: y1 + oy,
+            x2: x2 + ox,
+            y2: y2 + oy,
+            color,
+        });
+        k += 1.0;
     }
 }
 
